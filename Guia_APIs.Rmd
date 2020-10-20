@@ -1,0 +1,596 @@
+---
+title: 'Uso de APIs para recuperación de información bibliométrica'
+output:
+  html_notebook:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  html_document:
+    df_print: paged
+    toc: yes
+---
+
+Esta es una [R Markdown](http://rmarkdown.rstudio.com) Notebook con todos los contenidos del curso **Uso de APIs para recuperación de información bibliométrica**. Todos los códigos se encuentran disponible también por separado en scripts de R.
+
+
+# Consulta manual de APIs
+Las consultas a cualquier API pueden hacerse de manera manual en R. Para ello, la forma más básica es usando los paquetes `httr` y `rjson`. El primero permite hacer peticiones a través de HTTP (GET, PATCH, POST, HEAD, PUT y DELETE) desde R y el segundo trabajar con archivos JSON.
+```{r eval=FALSE}
+library(httr)
+library(rjson)
+```
+
+
+Una vez iniciadas los dos paquetes, el primer paso es construir una *query*, la cual almacenaremos en una variable con dicha denominación. En este caso vamos a buscar una revista en la base de datos de DOAJ usando su [API](https://doaj.org/api/v1/docs). Para ello, se usa el endpoint de DOAJ para buscar revistas científicas (`https://doaj.org/api/v1/search/journals/`) y se añade la *query* `issn:2504-0537` para indicar que busque dicho ISSN.
+```{r}
+query <- 'https://doaj.org/api/v1/search/journals/issn:2504-0537'
+```
+
+
+En siguiente lugar se realiza dicha petición a la API usando para ello la función `GET()` del paquete `httr`. El resultado lo almacenamos en la variable `getdata`. Una vez hecha la consulta obtendremos una respuesta, siendo de relevancia los metadatos relativos al *status* y *content-type* para poder conocer cómo ha ido la consulta.
+```{r}
+getdata <- httr::GET(url = query)
+getdata
+```
+
+
+De manera opcional se pueden especificar en la función `GET()` campos como los *headers* o *user_agent*.
+```{r}
+getdata <- httr::GET(url = query,  user_agent('httr'))
+getdata
+```
+
+
+Si la consulta ha funcionado correctamente, es posible revisar con la función `fromJSON()` todo el JSON que devuelve la API (en caso de que este sea el formato empleado). Una vez extraída la respuesta en formato JSON y con codificación UTF-8, es posible consultar campos concretos, como el número de resultados que devuelve la API.
+```{r}
+getdata_json <- rjson::fromJSON(httr::content(getdata, type='text', encoding = 'UTF-8'))
+getdata_json$total
+```
+
+
+De igual manera, como en este caso concreto hemos realizado la búsqueda de un ISSN lo normal es que devuelva un único resultado. Por ello podemos dirigirnos al primer resultado, que será con bastante seguridad la revista que queramos, y extraer de ella metadatos de la misma como el título, sistema de revisión, si es Open Access y licencia.
+```{r}
+getdata_json$results[[1]]$bibjson$title
+getdata_json$results[[1]]$bibjson$editorial_review$process
+getdata_json$results[[1]]$bibjson$license[[1]]$open_access
+getdata_json$results[[1]]$bibjson$license[[1]]$type
+```
+
+
+De igual manera, DOAJ cuenta con una API para buscar artículos científicos. Su funcionamiento no difiere del anterior. Usamos otro endpoint y establecemos una *query*, en este caso el DOI de un artículo científico, y tras ello recuperamos el JSON y del primer resultado extraemos varios metadatos.
+```{r}
+query <- 'https://doaj.org/api/v1/search/articles/doi:10.3389/fpsyg.2013.00479'
+getdata <- httr::GET(url = query)
+getdata_json <- rjson::fromJSON(httr::content(getdata, type='text', encoding = 'UTF-8'))
+getdata_json$results[[1]]$bibjson$title
+getdata_json$results[[1]]$bibjson$journal$title
+``` 
+
+
+## Automatización del proceso
+Como la consulta de cada registro se hace de manera separada, es posible automatizar este proceso para realizar múltiples consultas. Para ello, se puede generar un bucle `for` que realice tantas consultas como ISSNs queramos consultar.
+```{r}
+for(issn in c('2504-0537', '2624-9898', '2297-2668')){
+  
+  query <- paste0('https://doaj.org/api/v1/search/journals/issn:', issn)
+  getdata <- httr::GET(url = query,  user_agent('httr'))
+  getdata_json <- rjson::fromJSON(httr::content(getdata, type='text', encoding = 'UTF-8'))
+  
+  j_title <- getdata_json$results[[1]]$bibjson$title
+  j_er <- getdata_json$results[[1]]$bibjson$editorial_review$process
+  
+  print(c(issn, j_title, j_er))
+}
+```
+
+
+De igual manera, se pueden crear funciones con ello para, por ejemplo, almacenar en un `data.frame` los campos que queramos recuperar de cada consulta.
+```{r}
+doaj_data <- function(dois){
+  df <- data.frame(issn = character(),
+                   title = character(),
+                   editorial_review = character(),
+                   stringsAsFactors = FALSE)
+  
+  for(issn in dois){
+    query <- paste0('https://doaj.org/api/v1/search/journals/issn:', issn)
+    getdata <- httr::GET(url = query,  user_agent('httr'))
+    getdata_json <- rjson::fromJSON(httr::content(getdata, type='text', encoding = 'UTF-8'))
+    
+    j_title <- getdata_json$results[[1]]$bibjson$title
+    j_er <- getdata_json$results[[1]]$bibjson$editorial_review$process
+    
+    
+    df <- rbind.data.frame(df, data.frame(issn=issn, title=j_title, editorial_review=j_er))
+  }
+  
+  return(df)
+}
+```
+
+
+Así, con una simple función podemos repetir muchas consultas y almacenar los metadatos.
+```{r}
+df <- doaj_data(c('2504-0537', '2624-9898', '2297-2668'))
+df
+```
+
+
+No obstante, es necesario tener en cuenta en estos casos los posibles errores que pueden aparecer durante todo el proceso. Por ejemplo, cuando la API no encuentre resultados para nuestra consulta y quiera extraer metadatos de ahí.
+```{r error=TRUE}
+doaj_data(c('issn', '2504-0537', '2624-9898', '2297-2668'))
+```
+
+
+En este caso se puede solucionar rápidamente modificando la anterior funcion para que compruebe tras la petición que la respuesta es correcta y que además nos ha devuelto al menos un resultado. Aunque este no será el único error que podremos obtener y se requiere mucha más atención en este apartado.
+```{r}
+doaj_data <- function(dois){
+  df <- data.frame(issn = character(),
+                   title = character(),
+                   editorial_review = character(),
+                   stringsAsFactors = FALSE)
+  
+  for(issn in dois){
+    query <- paste0('https://doaj.org/api/v1/search/journals/issn:', issn)
+    getdata <- httr::GET(url = query,  user_agent('httr'))
+    getdata_json <- rjson::fromJSON(httr::content(getdata, type='text', encoding = 'UTF-8'))
+    
+    if(status_code(getdata) == 200 & getdata$headers$`x-total-count` > 0) {
+      j_title <- getdata_json$results[[1]]$bibjson$title
+      j_er <- getdata_json$results[[1]]$bibjson$editorial_review$process
+      
+      df <- rbind.data.frame(df, data.frame(issn=issn, title=j_title, editorial_review=j_er))
+    }
+  }
+  
+  return(df)
+}
+
+df <- doaj_data(c('issn', '2504-0537', '2624-9898', '2297-2668'))
+df
+```
+
+
+# El uso de paquetes
+## DOAJ
+Pese a ello. no es necesario profundizar tanto ni tener muchos conocimientos en programación. Muchas de las APIs cuentan con paquetes para muchos lenguajes de programación, facilitando con ello las consultas. En el caso de DOAJ existe el paquete [`jaod`](https://cran.r-project.org/web/packages/jaod/jaod.pdf).
+```{r eval=FALSE}
+install.packages('jaod')
+library(jaod)
+```
+
+
+Cada paquete tiene un funcionamiento diferente, es por ello que antes de usarlo es necesario revisar su documentación.
+```{r}
+help(jaod)
+```
+
+
+Para el caso de `jaod`, la búsqueda de resvistas y extracción de metadatos se resume mucho gracias a la función `jaod_journal_search()`:
+```{r warning=TRUE}
+res <- jaod::jaod_journal_search('issn:2504-0537')
+res$results$bibjson.title
+```
+
+
+Gracias a ello, en este caso nos permite simplificar mucho el trabajo. Por ejemplo, podemos crear el mismo bucle de consultas que antes, pero empleando menos código y garantizando un mejor funcionamiento.
+```{r}
+doaj_data <- function(dois){
+  df <- data.frame(issn = character(),
+                   title = character(),
+                   editorial_review = character(),
+                   stringsAsFactors = FALSE)
+  
+  for(issn in dois){
+    getdata <- jaod::jaod_journal_search(paste0('issn:', issn))
+    
+    if(getdata$total > 0){
+      df <- rbind.data.frame(df, data.frame(issn=issn, title=getdata$results$bibjson.title, editorial_review=getdata$results$bibjson.editorial_review.process))
+    }
+  }
+  
+  return(df)
+}
+
+df_do <- doaj_data(c('issn', '2504-0537', '2624-9898', '2297-2668'))
+df_do
+```
+
+
+## Crossref
+Crossref cuenta con un paquete en R llamado [`rcrossref`](https://cran.r-project.org/web/packages/rcrossref/rcrossref.pdf) con el que se pueden realizar consultas de manera muy eficiente a su API.
+```{r eval=FALSE}
+install.packages('rcrossref')
+library(rcrossref)
+```
+
+
+Dentro de las funciones que ofrece este paquete hay varias destacadas. En primer lugar está `cr_citation_count()`, la cual recupera el número de citas de un trabajo, se trata de un conteo propio de Crossref que no tiene que coincidir con el de otros servicios.
+```{r}
+df_cr <- rcrossref::cr_citation_count(doi='10.1002/asi.23309')
+df_cr
+```
+
+
+Como ventaja, es posible realizar de manera simultánea varias consultas de DOI.
+```{r}
+dois <- c('10.1002/asi.23309', '10.1016/j.joi.2007.02.001', '10.1007/s11192-014-1264-0')
+df_cr <- rcrossref::cr_citation_count(doi = dois)
+df_cr
+```
+
+
+Otra función interesante es `cr_journals()`, la cual permite buscar y obtener numerosa información de revistas científicas. Por un lado, es posible buscar revistas usando uno o varios términos. Con esta función los metadatos recuperados vienen dados en forma de lista, siendo el elemento `data` el que los incluye.
+```{r}
+df_cr <- rcrossref::cr_journals(query = 'library and information science')
+df_cr$data
+```
+
+
+De igual manera, es posible buscar información sobre una o varias revistas concretas usando su ISSN.
+```{r}
+df_cr <- rcrossref::cr_journals(issn = '1699-2407')
+df_cr$data
+
+issns <- c('1699-2407', '0165-5515')
+df_cr <- rcrossref::cr_journals(issn = issns)
+df_cr$data
+```
+
+
+Además de la información sobre la revista, es posible recuperar trabajos científicos publicados en ella usando el parámetro `works = TRUE`. Por defecto son 20 los trabajos científicos o revistas que recupera, pero mediante el parámetro `limit` se puede alterar dicho resultado, aunque el máximo es 1000.
+```{r}
+df_cr <- rcrossref::cr_journals(issn = '1699-2407', works = TRUE, limit = 50)
+df_cr$data
+```
+
+
+Los artículos recuperados de la revista consultada pueden ser además ordenados mediante los parámetros `sort` y `order`. Por ejemplo, ordenados por el número de citas recibidas en orden descendiente.
+```{r}
+df_cr <- rcrossref::cr_journals(issn = '1699-2407', works = TRUE, sort = 'is-referenced-by-count', order = 'desc')
+df_cr$data
+```
+
+
+En relación con la recuperación de trabajos científicos de una revista, también es posible establecer subbúsquedas con el parámetro `flq`. Por ejemplo, artículos en los que el nombre del autor sea Torres-Salinas.
+```{r}
+df_cr <- rcrossref::cr_journals(issn = '1699-2407', works = TRUE, flq = c(`query.author`='Torres-Salinas'))
+df_cr$data
+```
+
+
+De igual manera que con las revistas, existe una función para realizar consultas de artículos científicos. Con `cr_works()` podemos hacer dichas consultas y su funcionamiento es muy similar al de las revistas, compartiendo muchos de sus parámetros. Podemos buscar así artículos mediante un término y ordenar los resutlados por citas.
+```{r}
+df_cr <- rcrossref::cr_works(query = 'library', sort = 'is-referenced-by-count', order = 'desc')
+df_cr$data
+```
+
+
+También es posible buscar directamente varios DOI. En este caso, podemos incluso indicar con el parámetro `.progress = 'text'` que nos muestre el progreso de dicha consulta.
+```{r}
+dois <- c('10.1002/asi.23309', '10.1016/j.joi.2007.02.001', '10.1007/s11192-014-1264-0')
+df_cr <- rcrossref::cr_works(dois = dois, .progress = 'text')
+df_cr$data
+```
+
+
+Como pasa con las revistas, también existe un limite de 1000 resutados. No obstante, aquí podemos aumentar ese limite usando un *cursor*. Para ello fijamos un máximo en `cursor_max` y `limit`. El primero es el número de publicaciones total que queremos recuperar como máximo, mientras que el segundo hace referencia a los *chunks* de peticiones, es decir las subpeticiones que se realizan hasta alcanzar el máximo, de manera que este valor no puede ser mayor. Esta consulta también admite el uso del parámetro `.progress` aunque con un valor diferente al anterior. 
+```{r}
+df_cr <- rcrossref::cr_works(query = 'twitter', cursor = '*', cursor_max = 300, limit = 200, .progress = TRUE)
+df_cr$data
+```
+
+
+De manera paralela a la consulta, es posible llevar a cabo una búsqueda por facetas con el parámetro `facet`. Aunque solo está disponible para determinados campos. Es preferible emplearla sin que devuelva los metadatos de las publicaciones para que sea más rápida y permita obtener de manera sencilla un vistazo general a nuestra consulta.
+```{r}
+df_cr <- rcrossref::cr_works(query = 'Twitter', facet = 'publisher-name:*', limit = 0)
+df_cr$facets$`publisher-name`
+```
+
+
+## Web of Science
+Web of Science puede ser consultada a través del paquete [`wosr`](https://cran.r-project.org/web/packages/wosr/wosr.pdf).
+```{r eval=FALSE}
+install.packages('wosr')
+library(wosr)
+```
+
+
+
+Para usarla ese necesario introducir unas credenciales mediante la función `auth()`. Hay dos posibilidades para ello: usar un usuario y contraseña o dejar ambos campos como `NULL` y establecer conexión VPN con una institución suscrita a ella. Este último es nuestro caso.
+```{r}
+sid <- wosr::auth(username = NULL, password = NULL)
+```
+
+
+No son muchas las funcionalidades que ofrece este paquete. Se puede, por ejemplo, realizar con `query_wos()` una consulta y ver el número de resultados que hay para ella.
+```{r}
+wosr::query_wos('TS = scientometrics', sid = sid)
+```
+
+
+Asimismo, con el parámetro `editions` se pueden ajustar las ediciones a consultar.
+```{r}
+wosr::query_wos('TS = scientometrics', sid = sid, editions = c('SCI', 'SSCI'))
+```
+
+
+Es posible descargar dichos registros, es por ello que es mejor realizar en primer lugar la consulta para conocer el alcance. Para ello hay que usar la función `pull_wos()`. Gracias a esta función podemos descargar más de 500 registros de una vez, aunque los datos están subdivididos en una lista en base a campo como la revista, información de autor...
+```{r}
+df_ws <- wosr::pull_wos('TS = scientometrics', sid = sid)
+df_ws$publication
+```
+
+
+## Scopus
+En el caso de Scopus, es posible recuperar información de su base de datos a través del paquete [`rscopus`](https://cran.r-project.org/web/packages/rscopus/rscopus.pdf).
+```{r eval=FALSE}
+install.packages('rscopus')
+library(rscopus)
+```
+
+
+En este caso, es necesario disponer de una clave de acceso a la API para hacer uso de todas sus funcionalidades. Para ello es necesario registrarse y solicitarlo a través de su [página web](https://dev.elsevier.com/). Existen dos opciones para introducir la clave. En primer lugar introduciéndola como una parámetro en cada una de las funciones (`get_api_key()`) o estableciéndola de base en la sesión (`set_api_key()`).
+```{r}
+key <- rscopus::get_api_key(api_key = '')
+rscopus::set_api_key(api_key = '')
+```
+
+
+Es posible comprobar si la sesión tiene establecida dicha clave con la función `have_api_key()`.
+```{r}
+rscopus::have_api_key()
+```
+
+
+En primer lugar, es posible usar la función `process_author_name()` para buscar autores. Esta es de utilidad ya que para acceder a información de estos necesitamos su identificador, obtenido aquí. Con `verbose = FALSE` ocultamos mensajes, como la URL de la petición.
+```{r}
+author_sc <- rscopus::process_author_name(last_name = 'Moed', first_name = 'Henk F.', verbose = FALSE)
+author_sc$au_id
+```
+
+
+Es posible también recuperar metadatos de los autores mediante la función `author_retrieval()`. Se puede tanto buscar autores por nombre y apellidos como indicar el id de uno de ellos.
+```{r}
+author_sc <- rscopus::author_retrieval(last_name = 'Moed', first_name = 'Henk F.', verbose = FALSE)
+author_sc <- rscopus::author_retrieval(au_id = '7003555412', verbose = FALSE)
+author_sc$content$`author-retrieval-response`[[1]]$coredata$`document-count`
+author_sc$content$`author-retrieval-response`[[1]]$coredata$`cited-by-count`
+```
+
+
+Con la función `author_df()` se pueden buscar contenidos de un autor. Para garantizar que estos son de un autor, lo correcto es primero buscar su identificador y luego contenidos en base a ello. 
+```{r}
+df_sc <- rscopus::author_df(last_name = 'Moed', first_name = 'Henk F.', verbose = FALSE)
+df_sc <- rscopus::author_df(au_id = '7003555412', verbose = FALSE)
+df_sc
+```
+
+
+Con la función `scopus_search()` se pueden realizar consultas en Scopus a tavés de su API. Para hacer más manejables los datos es necesario usar tras ello la función `gen_entries_to_df()`. En función del parámetro `count` se puede usar el `view` para obtener más o menos información de los registros.
+```{r}
+df_sc <- rscopus::scopus_search(query = 'TITLE-ABS-KEY(altmetrics)', count = 10, view = 'COMPLETE', verbose = FALSE)
+df_sc <- rscopus::gen_entries_to_df(df_sc$entries)
+head(df_sc$df)
+```
+
+
+## Unpaywall
+Para acceder a la API de Unpaywall es necesario instalar el paquete [`roadoi`](https://cran.r-project.org/web/packages/roadoi/roadoi.pdf).
+```{r eval=FALSE}
+install.packages('roadoi')
+library(roadoi)
+```
+
+
+Aquí podemos usar la función `oadoi_fetch()` para consultar directamente varios DOIs. No obstante, existe una limitación de 100.000 consultas diarias y es necesario que te identifiques mediante un correo electrónico.
+```{r}
+dois <- c('10.7326/m18-2101', '10.1093/biosci/biz088')
+df_un <- roadoi::oadoi_fetch(dois = dois, email = 'usuario@correo.com')
+df_un
+```
+
+
+Existe la opción de que la función muestre el porcentaje de progreso de la consulta, algo que es de utilidad en consultas más extensas. Para ello solo hay que añadir a la función el parámetro `.progress = "text"`.
+```{r}
+dois <- c('10.7326/m18-2101', '10.1093/biosci/biz088', '10.1126/science.aat7693', '10.1038/s41467-019-12808-z',
+          '10.1136/bmj.k5094', '10.1126/science.aax0848', '10.1016/s0140-6736(19)30041-8', '10.1038/s41586-019-1666-5')
+df_un <- roadoi::oadoi_fetch(dois = dois, email = 'usuario@correo.com', .progress = "text")
+df_un
+```
+
+
+El resultado aparece en una variable de tipo `tbl_df`. Es por ello que algunos de los campos, como `oa_location`, incluyen a su vez otro data.frame en lugar de un valor atómico. 
+```{r}
+df_un[2,]$oa_locations
+```
+
+
+Estos campos requieren de un procesamiento posterior. Por ejemplo, generando otro data.frame en el que cada DOI se desdoble tantas veces como URLs tenga.
+```{r}
+# Para esta operación es necesario tener instalado y cargado el paquete dplyr
+library(dplyr)
+
+dplyr::mutate(df_un, urls = purrr::map(best_oa_location, 'url') %>% 
+                purrr::map_if(purrr::is_empty, ~ NA_character_) %>%
+                purrr::flatten_chr()
+              )[c('doi', 'urls')]
+```
+
+
+O que en caso de localizar un error en los DOIs no se detenga la consulta, que es una de las limitaciones, y tras ello quedarnos con aquellos campos que nos interesen, por ejemplo el DOI y si es Open Access.
+```{r warning=FALSE}
+# Para esta operación es necesario tener instalado y cargado el paquete dplyr
+library(dplyr)
+
+dois <- c('10.7326/m18-2101', '10.1093/biosci/biz088', '10.1126/science.aat7693', '10.1038/s41467-019-12808-z',
+          '10.1136/bmj.k5094', '-', '10.1016/s0140-6736(19)30041-8', '10.1038/s41586-019-1666-5')
+
+df_un <- purrr::map(dois, 
+                    .f = purrr::safely(function(x) roadoi::oadoi_fetch(x, email = 'usuario@correo.com')))
+
+df_un <- purrr::map_df(df_un, 'result')
+df_un <- df_un[, c('doi', 'is_oa')]
+df_un
+```
+
+
+## arXiv
+En el caso de arXiv, también es posible conectarse a la API mediante un paquete llamado [`aRxiv`](https://cran.r-project.org/web/packages/aRxiv/aRxiv.pdf).
+```{r eval=FALSE}
+install.packages('aRxiv')
+library(aRxiv)
+```
+
+
+Con la función `arxiv_search()` es posible realizar consultas. El resultado obtenido es un `data.frame` con las distintas publicaciones, ofreciendo al respecto distintos metadatos para cada una de ellas.
+```{r}
+df_ar <- aRxiv::arxiv_search('au:"Rodrigo Costas" AND ti:altmetrics')
+df_ar
+```
+
+
+Además, es posible ordernar los resultados con el parámetro `sort_by`. Por ejemplo, por fecha de envío en orden descendente (parámetro `ascending = FALSE`). 
+```{r}
+df_ar <- aRxiv::arxiv_search('au:"Rodrigo Costas" AND ti:altmetrics', sort_by = 'submitted', ascending = FALSE)
+df_ar
+```
+
+
+Es posible recuperar directamente el número total de preprints que se ajustan a la consulta. Para ello se usa la función `arxiv_count`. Una opción útil para conocer el alcance de la consulta.
+```{r}
+aRxiv::arxiv_count('submittedDate:[20180101 TO 20191231]')
+```
+
+
+Al respecto es necesario remarcar que la API cuenta con una limitación de 50.000 registros por consulta. Asimimso, por defecto la función `arxiv_search()` está limitada a 10 resultados, para alterarlo es necesario usar el parámetro `limit`. Es por ello que una buena estrategia de búsqueda es la de consultar primer el total de documentos que hay para la consulta que queremos y luego realizarla.
+```{r}
+aRxiv::arxiv_count('submittedDate:20190512*')
+df_ar <- aRxiv::arxiv_search('submittedDate:20190512*', sort_by = 'submitted', ascending = FALSE, limit = 300)
+df_ar
+```
+
+
+## Altmetric.com
+Otra de las API que cuentan con un paquete en R es Altmetric. Este se llama [`rAltmetric`](https://cran.r-project.org/web/packages/rAltmetri/rAltmetric.pdf).
+```{r eval=FALSE}
+install.packages('rAltmetric')
+library(rAltmetric)
+```
+
+
+Mediante la función `altmetrics` es posible realizar una consulta, usando para ello un DOI, PMID, arxiv o ISBN. Su funcionamiento es sin emgargo similar al de DOAJ. Con cada consulta solo podemos incluir un identificador. Aunque, el resultado no es un data.frame es un tipo de objeto `altmetric` que es necesario modificar.
+```{r}
+alt_doi <- rAltmetric::altmetrics(doi = '10.1038/480426a')
+alt_doi
+
+alt_arx <- rAltmetric::altmetrics(arxiv = '1905.08233')
+alt_arx
+```
+
+
+La conversión a un data.frame es también de manera individual y requiere el uso de la función `altmetric_data`.
+```{r}
+df_alt <- rAltmetric::altmetric_data(alt_doi)
+```
+
+
+De este modo, se puede crear una función con la que automatizar todo este proceso. Por ejemplo con un bucle que consulte tantos DOIs como queramos y que tras ello los vaya combinando en un data.frame. Decir que no todos los data.frame tienen los mismo campos, por lo que se generarán algunos vacíos.
+```{r}
+# Para esta operación es necesario tener instalado y cargado el paquete dplyr
+library(dplyr)
+
+altmetric_data <- function(dois){
+  df <- data.frame()
+  for(doi in dois){
+    alt <- rAltmetric::altmetrics(doi = doi)
+    df_alt <- rAltmetric::altmetric_data(alt)
+    df <- dplyr::bind_rows(df, df_alt)
+  }
+  
+  return(df)
+}
+
+altmetric_data(dois[1:2])
+```
+
+
+Por último en esta API, pese a que se puede usar de manera gratuita, es posible que tras realizar varias consultas su uso quede limitado. Es por ello que para su correcto funcionamiento requiere de una `key`, la cual se puede introducir con el parámetro `apikey`.
+```{r eval=FALSE}
+altmetrics(apikey = 'TU_KEY')
+```
+
+
+# Caso práctico
+Para ejemplificar la utilidad de estas herramientas, vamos a considerar dos casos prácticos.
+
+
+## Ejemplo 1
+En esta caso queremos hacer una búsqueda en Web of Science y tras ello consultar cuantos de estos registros se encuentran en Altmetric.com y obtener su Altmetric Attention Score.
+
+
+En primer lugar realizamos la consulta en Web of Science usando su API.
+```{r eval=FALSE}
+library(wosr)
+sid <- wosr::auth(username = NULL, password = NULL)
+
+wosr::query_wos('TS = (Wikipedia AND altmetric*)', sid = sid)
+
+df_ej1 <- wosr::pull_wos('TS = (Twitter AND altmetric*)', sid = sid)
+```
+
+
+Tras ello realizamos la consulta a Altmetric.com. Para ello usamos la función antes propuesta que realiza en bucle todas las consultas y después seleccionamos del conjunto de datos resultante el DOI y el Altmetric Attencion Score.
+```{r}
+library(rAltmetric)
+
+dois <- df_ej1$publication$doi
+
+# Para esta operación es necesario tener instalado y cargado el paquete dplyr
+library(dplyr)
+
+altmetric_data <- function(dois){
+  df <- data.frame()
+  for(doi in dois){
+    alt <- rAltmetric::altmetrics(doi = doi)
+    df_alt <- rAltmetric::altmetric_data(alt)
+    df <- dplyr::bind_rows(df, df_alt)
+  }
+  
+  return(df)
+}
+
+df_ej1_alt <- altmetric_data(dois[1:2])
+df_ej1_alt <- df_ej1_alt[,c('doi', 'score')]
+df_ej1_alt
+```
+
+
+## Ejemplo 2
+Para este segundo vamos a partir de un archivo CSV exportado desde Dimensions. Lo vamos a importar a RStudio y en Unpaywall vamos a consultar los DOIs para generar un `data.frame` con el título y si es Open Access. Por último, este último lo exportaremos en formato CSV.
+
+
+Para ello empezamos importando el archivo de Dimensions (*Dimensions.csv*). En este caso el archivo se encuentra en el mismo directorio que el script, es por ello que empleo una ruta relativa. También puede establecerse la ruta completa hasta el mismo.
+```{r}
+df_dm <- read.table('Dimensions.csv', header = TRUE, skip = 1, sep = ',', quote = '"', comment.char = '', stringsAsFactors=FALSE)
+```
+
+
+Una vez importado el archvio, almacenamos los DOI en una variable y los usamos en la petición a Unpawall.
+```{r}
+dois <- df_dm$DOI
+  
+# Para esta operación es necesario tener instalado y cargado el paquete dplyr
+library(dplyr)
+
+df_dm_un <- purrr::map(dois, 
+                       .f = purrr::safely(function(x) roadoi::oadoi_fetch(x, email = 'usuario@correo.com')))
+df_dm_un <- purrr::map_df(df_dm_un, 'result')
+df_dm_un <- df_dm_un[, c('title', 'is_oa')]
+df_dm_un
+```
+
+
+```{r}
+write.csv2(df_dm_un, 'Dimensions_OA.csv', row.names = FALSE, fileEncoding = 'utf-8')
+```
