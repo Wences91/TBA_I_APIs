@@ -1,5 +1,6 @@
 ---
 title: 'Uso de APIs para recuperación de información bibliométrica'
+author: 'Wenceslao Arroyo Machado'
 output:
   html_notebook:
     number_sections: yes
@@ -15,7 +16,7 @@ Esta es una [R Markdown](http://rmarkdown.rstudio.com) Notebook con todos los co
 
 # Consulta manual de APIs
 Las consultas a cualquier API pueden hacerse de manera manual en R. Para ello, la forma más básica es usando los paquetes `httr` y `rjson`. El primero permite hacer peticiones a través de HTTP (GET, PATCH, POST, HEAD, PUT y DELETE) desde R y el segundo trabajar con archivos JSON.
-```{r eval=FALSE}
+```{r message=FALSE, warning=FALSE}
 library(httr)
 library(rjson)
 ```
@@ -36,7 +37,7 @@ getdata
 
 De manera opcional se pueden especificar en la función `GET()` campos como los *headers* o *user_agent*.
 ```{r}
-getdata <- httr::GET(url = query,  user_agent('httr'))
+getdata <- httr::GET(url = query,  httr::user_agent('httr'))
 getdata
 ```
 
@@ -73,7 +74,7 @@ Como la consulta de cada registro se hace de manera separada, es posible automat
 for(issn in c('2504-0537', '2624-9898', '2297-2668')){
   
   query <- paste0('https://doaj.org/api/v1/search/journals/issn:', issn)
-  getdata <- httr::GET(url = query,  user_agent('httr'))
+  getdata <- httr::GET(url = query)
   getdata_json <- rjson::fromJSON(httr::content(getdata, type='text', encoding = 'UTF-8'))
   
   j_title <- getdata_json$results[[1]]$bibjson$title
@@ -94,7 +95,7 @@ doaj_data <- function(dois){
   
   for(issn in dois){
     query <- paste0('https://doaj.org/api/v1/search/journals/issn:', issn)
-    getdata <- httr::GET(url = query,  user_agent('httr'))
+    getdata <- httr::GET(url = query)
     getdata_json <- rjson::fromJSON(httr::content(getdata, type='text', encoding = 'UTF-8'))
     
     j_title <- getdata_json$results[[1]]$bibjson$title
@@ -132,7 +133,7 @@ doaj_data <- function(dois){
   
   for(issn in dois){
     query <- paste0('https://doaj.org/api/v1/search/journals/issn:', issn)
-    getdata <- httr::GET(url = query,  user_agent('httr'))
+    getdata <- httr::GET(url = query)
     getdata_json <- rjson::fromJSON(httr::content(getdata, type='text', encoding = 'UTF-8'))
     
     if(status_code(getdata) == 200 & getdata$headers$`x-total-count` > 0) {
@@ -154,8 +155,8 @@ df
 # El uso de paquetes
 ## DOAJ
 Pese a ello. no es necesario profundizar tanto ni tener muchos conocimientos en programación. Muchas de las APIs cuentan con paquetes para muchos lenguajes de programación, facilitando con ello las consultas. En el caso de DOAJ existe el paquete [`jaod`](https://cran.r-project.org/web/packages/jaod/jaod.pdf).
-```{r eval=FALSE}
-install.packages('jaod')
+```{r results='hide'}
+#install.packages('jaod')
 library(jaod)
 ```
 
@@ -199,8 +200,8 @@ df_do
 
 ## Crossref
 Crossref cuenta con un paquete en R llamado [`rcrossref`](https://cran.r-project.org/web/packages/rcrossref/rcrossref.pdf) con el que se pueden realizar consultas de manera muy eficiente a su API.
-```{r eval=FALSE}
-install.packages('rcrossref')
+```{r message=FALSE, warning=FALSE}
+#install.packages('rcrossref')
 library(rcrossref)
 ```
 
@@ -269,14 +270,14 @@ df_cr$data
 También es posible buscar directamente varios DOI. En este caso, podemos incluso indicar con el parámetro `.progress = 'text'` que nos muestre el progreso de dicha consulta.
 ```{r}
 dois <- c('10.1002/asi.23309', '10.1016/j.joi.2007.02.001', '10.1007/s11192-014-1264-0')
-df_cr <- rcrossref::cr_works(dois = dois, .progress = 'text')
+df_cr <- rcrossref::cr_works(dois = dois)
 df_cr$data
 ```
 
 
 Como pasa con las revistas, también existe un limite de 1000 resutados. No obstante, aquí podemos aumentar ese limite usando un *cursor*. Para ello fijamos un máximo en `cursor_max` y `limit`. El primero es el número de publicaciones total que queremos recuperar como máximo, mientras que el segundo hace referencia a los *chunks* de peticiones, es decir las subpeticiones que se realizan hasta alcanzar el máximo, de manera que este valor no puede ser mayor. Esta consulta también admite el uso del parámetro `.progress` aunque con un valor diferente al anterior. 
 ```{r}
-df_cr <- rcrossref::cr_works(query = 'twitter', cursor = '*', cursor_max = 300, limit = 200, .progress = TRUE)
+df_cr <- rcrossref::cr_works(query = 'twitter', cursor = '*', cursor_max = 300, limit = 200)
 df_cr$data
 ```
 
@@ -290,8 +291,8 @@ df_cr$facets$`publisher-name`
 
 ## Web of Science
 Web of Science puede ser consultada a través del paquete [`wosr`](https://cran.r-project.org/web/packages/wosr/wosr.pdf).
-```{r eval=FALSE}
-install.packages('wosr')
+```{r message=FALSE, warning=FALSE}
+#install.packages('wosr')
 library(wosr)
 ```
 
@@ -315,23 +316,28 @@ wosr::query_wos('TS = scientometrics', sid = sid, editions = c('SCI', 'SSCI'))
 ```
 
 
-Es posible descargar dichos registros, es por ello que es mejor realizar en primer lugar la consulta para conocer el alcance. Para ello hay que usar la función `pull_wos()`. Gracias a esta función podemos descargar más de 500 registros de una vez, aunque los datos están subdivididos en una lista en base a campo como la revista, información de autor...
-```{r}
+Es posible descargar dichos registros, es por ello que es mejor realizar en primer lugar la consulta para conocer el alcance. Para ello hay que usar la función `pull_wos()`.
+```{r results='hide', message=FALSE, warning=FALSE}
 df_ws <- wosr::pull_wos('TS = scientometrics', sid = sid)
+```
+
+
+Gracias a esta función podemos descargar más de 500 registros de una vez, aunque los datos están subdivididos en una lista en base a campo como la revista, información de autor...
+```{r}
 df_ws$publication
 ```
 
 
 ## Scopus
 En el caso de Scopus, es posible recuperar información de su base de datos a través del paquete [`rscopus`](https://cran.r-project.org/web/packages/rscopus/rscopus.pdf).
-```{r eval=FALSE}
-install.packages('rscopus')
+```{r message=FALSE, warning=FALSE}
+#install.packages('rscopus')
 library(rscopus)
 ```
 
 
 En este caso, es necesario disponer de una clave de acceso a la API para hacer uso de todas sus funcionalidades. Para ello es necesario registrarse y solicitarlo a través de su [página web](https://dev.elsevier.com/). Existen dos opciones para introducir la clave. En primer lugar introduciéndola como una parámetro en cada una de las funciones (`get_api_key()`) o estableciéndola de base en la sesión (`set_api_key()`).
-```{r}
+```{r eval=FALSE}
 key <- rscopus::get_api_key(api_key = '')
 rscopus::set_api_key(api_key = '')
 ```
@@ -377,8 +383,8 @@ head(df_sc$df)
 
 ## Unpaywall
 Para acceder a la API de Unpaywall es necesario instalar el paquete [`roadoi`](https://cran.r-project.org/web/packages/roadoi/roadoi.pdf).
-```{r eval=FALSE}
-install.packages('roadoi')
+```{r message=FALSE, warning=FALSE}
+#install.packages('roadoi')
 library(roadoi)
 ```
 
@@ -391,23 +397,23 @@ df_un
 ```
 
 
-Existe la opción de que la función muestre el porcentaje de progreso de la consulta, algo que es de utilidad en consultas más extensas. Para ello solo hay que añadir a la función el parámetro `.progress = "text"`.
+Existe la opción de que la función muestre el porcentaje de progreso de la consulta, algo que es de utilidad en consultas más extensas. Para ello solo hay que añadir a la función el parámetro `.progress = 'text'`.
 ```{r}
 dois <- c('10.7326/m18-2101', '10.1093/biosci/biz088', '10.1126/science.aat7693', '10.1038/s41467-019-12808-z',
           '10.1136/bmj.k5094', '10.1126/science.aax0848', '10.1016/s0140-6736(19)30041-8', '10.1038/s41586-019-1666-5')
-df_un <- roadoi::oadoi_fetch(dois = dois, email = 'usuario@correo.com', .progress = "text")
+df_un <- roadoi::oadoi_fetch(dois = dois, email = 'usuario@correo.com')
 df_un
 ```
 
 
 El resultado aparece en una variable de tipo `tbl_df`. Es por ello que algunos de los campos, como `oa_location`, incluyen a su vez otro data.frame en lugar de un valor atómico. 
 ```{r}
-df_un[2,]$oa_locations
+df_un[2,]$oa_locations[[1]]
 ```
 
 
 Estos campos requieren de un procesamiento posterior. Por ejemplo, generando otro data.frame en el que cada DOI se desdoble tantas veces como URLs tenga.
-```{r}
+```{r message=FALSE, warning=FALSE}
 # Para esta operación es necesario tener instalado y cargado el paquete dplyr
 library(dplyr)
 
@@ -421,7 +427,7 @@ dplyr::mutate(df_un, urls = purrr::map(best_oa_location, 'url') %>%
 O que en caso de localizar un error en los DOIs no se detenga la consulta, que es una de las limitaciones, y tras ello quedarnos con aquellos campos que nos interesen, por ejemplo el DOI y si es Open Access.
 ```{r warning=FALSE}
 # Para esta operación es necesario tener instalado y cargado el paquete dplyr
-library(dplyr)
+#library(dplyr)
 
 dois <- c('10.7326/m18-2101', '10.1093/biosci/biz088', '10.1126/science.aat7693', '10.1038/s41467-019-12808-z',
           '10.1136/bmj.k5094', '-', '10.1016/s0140-6736(19)30041-8', '10.1038/s41586-019-1666-5')
@@ -437,8 +443,8 @@ df_un
 
 ## arXiv
 En el caso de arXiv, también es posible conectarse a la API mediante un paquete llamado [`aRxiv`](https://cran.r-project.org/web/packages/aRxiv/aRxiv.pdf).
-```{r eval=FALSE}
-install.packages('aRxiv')
+```{r message=FALSE, warning=FALSE}
+#install.packages('aRxiv')
 library(aRxiv)
 ```
 
@@ -473,8 +479,8 @@ df_ar
 
 ## Altmetric.com
 Otra de las API que cuentan con un paquete en R es Altmetric. Este se llama [`rAltmetric`](https://cran.r-project.org/web/packages/rAltmetri/rAltmetric.pdf).
-```{r eval=FALSE}
-install.packages('rAltmetric')
+```{r message=FALSE, warning=FALSE}
+#install.packages('rAltmetric')
 library(rAltmetric)
 ```
 
@@ -498,7 +504,7 @@ df_alt <- rAltmetric::altmetric_data(alt_doi)
 De este modo, se puede crear una función con la que automatizar todo este proceso. Por ejemplo con un bucle que consulte tantos DOIs como queramos y que tras ello los vaya combinando en un data.frame. Decir que no todos los data.frame tienen los mismo campos, por lo que se generarán algunos vacíos.
 ```{r}
 # Para esta operación es necesario tener instalado y cargado el paquete dplyr
-library(dplyr)
+#library(dplyr)
 
 altmetric_data <- function(dois){
   df <- data.frame()
@@ -517,7 +523,7 @@ altmetric_data(dois[1:2])
 
 Por último en esta API, pese a que se puede usar de manera gratuita, es posible que tras realizar varias consultas su uso quede limitado. Es por ello que para su correcto funcionamiento requiere de una `key`, la cual se puede introducir con el parámetro `apikey`.
 ```{r eval=FALSE}
-altmetrics(apikey = 'TU_KEY')
+rAltmetric::altmetrics(apikey = 'TU_KEY')
 ```
 
 
@@ -530,8 +536,8 @@ En esta caso queremos hacer una búsqueda en Web of Science y tras ello consulta
 
 
 En primer lugar realizamos la consulta en Web of Science usando su API.
-```{r eval=FALSE}
-library(wosr)
+```{r results='hide', message=FALSE, warning=FALSE}
+#library(wosr)
 sid <- wosr::auth(username = NULL, password = NULL)
 
 wosr::query_wos('TS = (Wikipedia AND altmetric*)', sid = sid)
@@ -541,13 +547,13 @@ df_ej1 <- wosr::pull_wos('TS = (Twitter AND altmetric*)', sid = sid)
 
 
 Tras ello realizamos la consulta a Altmetric.com. Para ello usamos la función antes propuesta que realiza en bucle todas las consultas y después seleccionamos del conjunto de datos resultante el DOI y el Altmetric Attencion Score.
-```{r}
-library(rAltmetric)
+```{r results='hide', message=FALSE, warning=FALSE}
+#library(rAltmetric)
 
 dois <- df_ej1$publication$doi
 
 # Para esta operación es necesario tener instalado y cargado el paquete dplyr
-library(dplyr)
+#library(dplyr)
 
 altmetric_data <- function(dois){
   df <- data.frame()
@@ -562,6 +568,11 @@ altmetric_data <- function(dois){
 
 df_ej1_alt <- altmetric_data(dois[1:2])
 df_ej1_alt <- df_ej1_alt[,c('doi', 'score')]
+```
+
+
+
+```{r}
 df_ej1_alt
 ```
 
@@ -577,16 +588,22 @@ df_dm <- read.table('Dimensions.csv', header = TRUE, skip = 1, sep = ',', quote 
 
 
 Una vez importado el archvio, almacenamos los DOI en una variable y los usamos en la petición a Unpawall.
-```{r}
+```{r message=FALSE, warning=FALSE}
 dois <- df_dm$DOI
-  
+
+#library(roadoi)
+
 # Para esta operación es necesario tener instalado y cargado el paquete dplyr
-library(dplyr)
+#library(dplyr)
 
 df_dm_un <- purrr::map(dois, 
                        .f = purrr::safely(function(x) roadoi::oadoi_fetch(x, email = 'usuario@correo.com')))
 df_dm_un <- purrr::map_df(df_dm_un, 'result')
 df_dm_un <- df_dm_un[, c('title', 'is_oa')]
+```
+
+
+```{r}
 df_dm_un
 ```
 
